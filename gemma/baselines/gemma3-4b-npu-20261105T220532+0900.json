@@ -1,0 +1,25 @@
+{
+  "model_id": "OpenVINO/gemma-3-4b-it-int4-cw-ov",
+  "revision": "5397b33a5fadf59466bf9f9690348ed8499f2b68",
+  "model_dir": "C:\\Users\\IJKK-PEAR\\projects\\plamo3_demo\\models\\gemma-3-4b-it-int4-cw-ov",
+  "device": "NPU",
+  "npu": "Intel(R) AI Boost",
+  "openvino": "2026.4.1-22982-e213a147257-releases/2026/4",
+  "openvino_genai": "2026.4.1.0-3408-ab01d1771e4",
+  "pipeline_config": {
+    "MAX_PROMPT_LEN": 256,
+    "MIN_RESPONSE_LEN": 256,
+    "GENERATE_HINT": "BEST_PERF"
+  },
+  "max_new_tokens": 256,
+  "initialization_seconds": 30.93664600000193,
+  "warmup_runs": 1,
+  "measured_runs": 1,
+  "prompt": "Translate the following Japanese text into English. Output only the translation.\n\n来週の月曜日に予定している開発会議では、翻訳アプリケーションの性能と使いやすさについて確認します。参加者は、これまでに見つかった問題点と改善案を金曜日までに共有してください。新しいバージョンでは、文章を翻訳した後に、最初のトークンが生成されるまでの時間と、その後の生成速度が表示されます。短い文章だけでなく、複数の文からなる案内や業務上の連絡も使い、訳文が最後まで自然につながることを確認してください。測定結果には使用したモデルと入力文を記録し、同じ条件で比較できるようにします。",
+  "output_text": "The development meeting scheduled for next Monday will focus on the performance and usability of the translation application. Participants are asked to share any issues and proposed improvements by Friday. The new version will include the time it takes to generate the first token after translation, as well as the overall generation speed. It is important to ensure that the translated text flows naturally, even with short and multiple-sentence-long instructions and business-related communications. The results should include the model and input text used for comparison under the same conditions.\n",
+  "input_tokens": 140,
+  "generated_tokens": 104,
+  "ttft_seconds": 0.14870889282226563,
+  "decode_tokens_per_second": 35.075767517089844,
+  "generation_seconds": 3.08585009765625
+}

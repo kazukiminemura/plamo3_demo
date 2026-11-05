@@ -1,0 +1,115 @@
+# PLaMo 3 Translate 8B / OpenVINO CUI
+
+以下のコマンドはリポジトリのルートで実行します。Gemmaは隣の `gemma/` フォルダーに分離しています。
+
+既定は **NPU・INT4・最大256生成トークン** です。
+長さを調整するCLI引数は `--max-new-tokens` だけです。原文は自動判定し、既定では日本語へ翻訳します。
+
+## 実行
+
+```powershell
+uv sync --python 3.12
+uv run plamo-translate devices
+
+# 省略時は --max-new-tokens 256
+uv run plamo-translate translate "The meeting has been rescheduled for next Monday."
+
+# 生成上限を変更
+uv run plamo-translate translate "The meeting has been rescheduled for next Monday." --max-new-tokens 128
+
+# 日本語から英語
+uv run plamo-translate translate "会議は来週の月曜日に変更されました。" --target-lang en
+
+# ファイル入力・出力
+uv run plamo-translate translate --input input.txt --output translated.txt
+
+# 対話モード（/quit または Ctrl+C で終了）
+uv run plamo-translate translate --target-lang en
+```
+
+テキスト・UTF-8ファイル・標準入力に対応します。単発翻訳では訳文だけを標準出力に出し、読込状況・警告は標準エラーへ出します。
+各翻訳のTTFT（最初の生成トークンまでの秒数）とDecode速度（2トークン目以降のtokens/s）も標準エラーへ表示します。モデル読込・コンパイル時間は含みません。生成数が不足して計測できない値は `N/A` になります。
+生成は停止トークンに達すると終了します。`--max-new-tokens` は出力数を固定する設定ではなく上限です。
+
+## INT4モデル
+
+この環境のモデルは `plamo3/models/plamo-npu-rotated-cw-int4` に作成済みです。
+INT4対称・チャネル単位の重み圧縮を使い、Embeddingと最終出力層はNNCFの既定のINT8バックアップです。
+BINファイルは4,710,677,278バイトです。アプリと `generation_config.json` の既定生成上限は256です。
+NPUでは回転済みKVキャッシュと1トークンDecodeを使います。
+
+新しい環境で同じモデルを作成する場合（初回のみ）:
+
+```powershell
+uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 --revision 681bd55cf01f5412aab8881e6a4a276c948fabc1 --model-dir plamo3/models/plamo-npu-rotated-cw-int4
+```
+
+既存のモデルは作り直す必要はありません。空でない変換先には上書きしません。
+元重みの取得は約17GBで、変換には推論より多くのメモリを使います。
+公式PFNリポジトリのカスタム実装を `trust_remote_code=True` で読み込みます。
+
+## 内部コンテクストの自動設定
+
+`--max-seq-len`、`--npu-context-length`、ベンチマークの `--context-length` は指定しません。
+アプリがPFML3プロンプトを数え、入力と生成上限が収まる長さを32トークン単位で自動設定します。
+たとえば入力26トークン・生成上限256なら内部長は288トークンです。
+対話中は同じグラフを再利用し、必要な場合だけ大きいグラフをコンパイルします。
+
+回転済みキャッシュの最適化モデルは、スライディングウィンドウ内の最大2,048トークンに対応します。
+入力と生成上限の合計が制限を超える場合は、入力を分割するか `--max-new-tokens` を減らしてください。
+モデルは `--model-dir`、デバイスは `--device CPU` / `--device GPU` で変更できます。
+NPUでは最適化済みINT4モデルを優先し、CPU/GPUでは通常の未回転キャッシュIRを既定として使用します。
+
+## 検証とベンチマーク
+
+```powershell
+uv run python -X utf8 -m unittest plamo3.test_app -v
+uv run python -X utf8 -m plamo3.benchmark_npu --max-new-tokens 256
+```
+
+小型モデルで公式PyTorch実装とのlogits一致、キャッシュの位置情報、連続リクエストの初期化を検証します。
+ベンチマークはウォームアップ1回＋3回測定し、TTFT・Decode・翻訳時間・訳文・モデルのSHA-256をJSON/CSVへ保存します。
+入力には、240文字の段落を17回繰り返し、末尾に16文字の文を加えた4096文字の合成負荷を使います（翻訳品質の評価用ではありません）。
+18分割し、同じコンパイル済みモデルを再利用します。生成上限256は各分割に適用されます。
+ウォームアップは先頭の段落だけで行い、本測定は4096文字全体を翻訳します。
+全文の処理文字数/秒と、各分割のTTFTを除いたDecode速度も記録・表示します。
+4096文字の実測（ウォームアップ後1回）は355.722秒、11.515文字/秒、TTFT 0.701秒、Decode 4.428 tokens/sでした。
+全18分割が停止トークンまで翻訳されました。160文字以下への分割も試しましたが、480文字の比較測定で11.200文字/秒となり、採用していません。
+入力を増やすことによる速度向上は確認できていません。
+内部長はアプリと同じ規則で自動設定します。
+
+以前の128トークン固定長での測定（現在の自動設定・256生成トークンとは条件が異なります）:
+
+| 方式 | Decode中央値 | 翻訳全体の生成速度中央値 |
+| --- | ---: | ---: |
+| 旧・接頭辞再計算 | 1.937トークン/秒 | 1.697トークン/秒 |
+| 回転済みKV / CW INT4 | 5.456トークン/秒 | 4.392トークン/秒 |
+
+単一の日英翻訳文を用いた測定で、15トークン/秒は未達です。
+
+現在のNPUコンパイラーでは融合Attentionのキャッシュ出力でバッファ割り当てエラーが出るため、
+最適化IRのAttentionをMatMul・Softmaxに分解しています。NPU指定時にCPU/GPUへ自動では切り替えません。
+INT4圧縮により原モデルと訳文が変わる場合があります。
+
+## 参照
+
+PLaMo 3 INT4をOpenVINO GenAIのNPUパイプラインで試す場合:
+
+```powershell
+uv run python -X utf8 -m plamo3.plamo_genai
+```
+
+初回は既存の `plamo3/models/plamo-npu-rotated-cw-int4` の重みを使い、GenAI用のstateful IRを `plamo3/models/plamo-genai-int4` に作成します。
+入力のトークン化・出力の復号には公式Pythonトークナイザーを使い、生成ループとKVキャッシュ管理はGenAIの `LLMPipeline` に任せます。
+既定の240文字を日英翻訳し、ウォームアップ1回＋本測定1回の結果を `plamo3/baselines/plamo3-genai-npu-*.json` に保存します。
+生成上限は `--max-new-tokens`（既定256）です。入力と生成上限の合計は、このIRでは2048トークン以内に収めます。
+GenAIの計測値はPython側のトークン化・復号時間を含みません。
+
+- [公式モデル・PFML3仕様](https://huggingface.co/pfnet/plamo-3-translate-8b)
+- [PLaMo Community License](https://huggingface.co/pfnet/plamo-3-translate-8b/tree/main/LICENSE)
+- [OpenVINO GQA形式に関する報告](https://github.com/openvinotoolkit/openvino/issues/39385)
+
+モデルの利用条件は公式のライセンスを参照してください。
+
+GenAI版の実測: TTFT 0.335秒、Decode 5.54 tokens/s。
+[GenAI測定結果](baselines/plamo3-genai-npu-20261105T222234+0900.json)
