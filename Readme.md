@@ -28,6 +28,25 @@ plamo3/
 uv sync --python 3.12 --locked
 ```
 
+モデルの事前ダウンロード（変換・推論は行いません）:
+
+```powershell
+# 両方を取得。片方だけなら末尾に plamo3 または gemma を指定
+uv run python -X utf8 download_models.py
+uv run python -X utf8 download_models.py plamo3
+uv run python -X utf8 download_models.py gemma
+```
+
+取得済みのファイルは再利用し、中断した場合も同じコマンドで再実行できます。
+Gemmaは利用条件への同意と `uv run hf auth login` が必要です。
+Gemmaの保存先は `gemma/models/gemma-3-4b-it-int4-cw-ov` です。
+PLaMoは約17GBの元モデルを `plamo3/models/.source/<revision>` に取得します。
+PLaMoは取得だけでは推論できません。初回は次のコマンドでINT4へ変換してください（取得済みの元モデルを再利用します）。
+
+```powershell
+uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 --revision 681bd55cf01f5412aab8881e6a4a276c948fabc1 --model-dir plamo3/models/plamo-npu-rotated-cw-int4
+```
+
 Gemma 3 4B INT4 / OpenVINO GenAI / NPU:
 
 ```powershell
