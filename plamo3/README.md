@@ -1,6 +1,6 @@
 # PLaMo 3 Translate 8B / OpenVINO CUI
 
-以下のコマンドはリポジトリのルートで実行します。Gemmaは隣の `gemma/` フォルダーに分離しています。
+以下のコマンドはリポジトリのルートで実行します。初回は [ルートREADMEの準備・ダウンロード・変換手順](../Readme.md) を先に実行してください。Gemmaは隣の `gemma/` フォルダーに分離しています。
 
 既定は **NPU・INT4・最大256生成トークン** です。
 長さを調整するCLI引数は `--max-new-tokens` だけです。原文は自動判定し、既定では日本語へ翻訳します。
@@ -33,9 +33,9 @@ uv run plamo-translate translate --target-lang en
 
 ## INT4モデル
 
-この環境のモデルは `plamo3/models/plamo-npu-rotated-cw-int4` に作成済みです。
+NPU用モデルの保存先は `plamo3/models/plamo-npu-rotated-cw-int4` です。モデル本体はGitに含まれないため、新しい環境では作成が必要です。
 INT4対称・チャネル単位の重み圧縮を使い、Embeddingと最終出力層はNNCFの既定のINT8バックアップです。
-BINファイルは4,710,677,278バイトです。アプリと `generation_config.json` の既定生成上限は256です。
+過去のエクスポートではBINファイルは4,710,677,278バイトでした。アプリと `generation_config.json` の既定生成上限は256です。
 NPUでは回転済みKVキャッシュと1トークンDecodeを使います。
 
 新しい環境で同じモデルを作成する場合（初回のみ）:
@@ -148,7 +148,7 @@ INT4重みを保ったまま演算グラフの型をFP32に統一し、出力端
 MLP投影の分割（5.23 tokens/s）とEmbedding行選択の移動（5.26 tokens/s）は改善せず、採用していません。これらの探索値は本測定1回であり、上表の最終比較はそれぞれ3回の中央値です。
 
 探索測定の記録は [baselines/investigations/](baselines/investigations/) にまとめています。
-推論で使わない取得元の重みキャッシュ `plamo3/models/.source/` と調査用ソースは削除しています。モデルを再エクスポートするときは取得元の重みを再ダウンロードします。
+元の重みは `plamo3/models/.source/<revision>/` に保存し、再エクスポート時に再利用します。削除した場合は再ダウンロードが必要です。変換済みモデルでの推論には元の重みは使いません。
 
 不要なSliceは、[OpenVINO 2026.4.1の出力層分離処理](https://github.com/openvinotoolkit/openvino/blob/2026.4.1/src/plugins/intel_npu/src/plugin/npuw/llm_compiled_model.cpp)のパターン認識を妨げていました。
 主な改善はFP16からFP32へのIR表現の統一で得られました。この環境でのコンパイラー最適化との相性を実測で切り分けた結果であり、一般にFP32計算がFP16計算より速いという意味ではありません。
