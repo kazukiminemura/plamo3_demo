@@ -1,0 +1,26 @@
+{
+  "baseline_commit": "61a1daf62853065b943ae541c703a5feda3723c1",
+  "original_int4_constants": 128,
+  "optimized_int4_constants": 129,
+  "original_int4_weights_unchanged": true,
+  "original_int4_bytes": 3825205248,
+  "new_int4_constants": {
+    "Constant_34678": {
+      "sha256": "c58ac014f468a56f53896fbcc6b94dd8f89ba88a8b28d39f3d8ef1e3471a63ab",
+      "bytes": 220200960
+    }
+  },
+  "baseline_model_bin_bytes": 4715129625,
+  "optimized_model_bin_bytes": 4494821145,
+  "lm_head_quantization": {
+    "mode": "int4_sym",
+    "group_size": -1,
+    "shape": [
+      107520,
+      4096
+    ],
+    "original_bytes": 440401920,
+    "packed_bytes": 220200960,
+    "max_weight_absolute_error": 0.04706137627363205
+  }
+}

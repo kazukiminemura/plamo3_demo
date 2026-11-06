@@ -1,10 +1,13 @@
 """Compare GenAI NPU configurations with identical tokenized translation inputs."""
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
 import statistics
+import subprocess
+import sys
 from time import perf_counter
 
 from .plamo_genai import DEFAULT_TEXT, SOURCE, prepare_model
@@ -16,17 +19,20 @@ def main():
     model_options = parser.add_mutually_exclusive_group()
     model_options.add_argument("--model-dir", type=Path)
     model_options.add_argument("--graph-precision", choices=["fp16", "fp32"], default="fp32")
+    parser.add_argument("--int4-lm-head", action="store_true", help="出力層もINT4に再量子化")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--runs", type=positive, default=3)
     parser.add_argument("--max-new-tokens", type=positive, default=256)
     parser.add_argument("--validate", action="store_true", help="追加4文の日英・英日翻訳も検証")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.model_dir and args.int4_lm_head:
+        parser.error("--int4-lm-head cannot be combined with --model-dir")
     import openvino as ov
     import openvino_genai as genai
     from transformers import AutoTokenizer
 
-    args.model_dir = args.model_dir or prepare_model(args.graph_precision)
+    args.model_dir = args.model_dir or prepare_model(args.graph_precision, args.int4_lm_head)
     tokenizer = AutoTokenizer.from_pretrained(SOURCE, trust_remote_code=True, local_files_only=True)
     prompt = build_prompt(DEFAULT_TEXT, "ja", "en")
     encoded = tokenizer(prompt, return_tensors="np")
@@ -40,6 +46,18 @@ def main():
               "openvino": ov.__version__, "genai": genai.__version__, "input_text": DEFAULT_TEXT,
               "input_tokens": encoded["input_ids"].shape[1], "max_new_tokens": args.max_new_tokens,
               "runs": []}
+    repository = Path(__file__).resolve().parent.parent
+    report.update({
+        "measured_at": datetime.now().astimezone().isoformat(),
+        "command": [sys.executable, "-m", "plamo3.benchmark_genai", *sys.argv[1:]],
+        "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip(),
+        "tracked_changes": subprocess.check_output(["git", "diff", "HEAD", "--name-only"], cwd=repository, text=True).splitlines(),
+        "source_sha256": {name: hashlib.sha256((repository / "plamo3" / name).read_bytes()).hexdigest()
+                          for name in ("benchmark_genai.py", "plamo_genai.py")},
+        "input_token_ids": encoded["input_ids"][0].tolist(),
+        "npu_architecture": ov.Core().get_property("NPU", "DEVICE_ARCHITECTURE"),
+        "npu_compiler_version": str(ov.Core().get_property("NPU", "NPU_COMPILER_VERSION")),
+    })
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     def save():

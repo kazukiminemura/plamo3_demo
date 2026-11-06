@@ -1,0 +1,66 @@
+{
+  "baseline_commit": "61a1daf62853065b943ae541c703a5feda3723c1",
+  "baseline": "main-61a1daf-baseline.json",
+  "baseline_recheck": "main-61a1daf-recheck.json",
+  "optimized": "optimized-head-int4.json",
+  "weight_verification": "head-int4-weight-verification.json",
+  "change": "Optional asymmetric INT8 to symmetric channel-wise INT4 requantization of LM head; no compiler source or system power policy changes",
+  "source_sha256": {
+    "benchmark_genai.py": "0109caf0827bf7953396108a7a65159394f7aa04ceb52717ed17d4b41d9e2266",
+    "plamo_genai.py": "7eb475ad4877505c2aed3e75872b4cd7d89b2f84d3e9102378eca0ad91b1fffe"
+  },
+  "median_decode_tokens_per_second": {
+    "baseline": 21.571060180664062,
+    "recheck": 21.597503662109375,
+    "optimized": 22.910133361816406
+  },
+  "speedup_vs_baseline": 1.0620773003244721,
+  "speedup_vs_recheck": 1.0607769175661679,
+  "same_baseline_output_tokens": false,
+  "quality_validation": [
+    {
+      "input_text": "来週の月曜日に予定している開発会議では、翻訳アプリケーションの性能と使いやすさについて確認します。参加者は、これまでに見つかった問題点と改善案を金曜日までに共有してください。新しいバージョンでは、文章を翻訳した後に、最初のトークンが生成されるまでの時間と、その後の生成速度が表示されます。短い文章だけでなく、複数の文からなる案内や業務上の連絡も使い、訳文が最後まで自然につながることを確認してください。測定結果には使用したモデルと入力文を記録し、同じ条件で比較できるようにします。",
+      "baseline_output": "In the development meeting scheduled for next Monday, we will review the performance and usability of the translation application. Participants should share any issues identified so far and proposed improvements by Friday. In the new version, after translating a sentence, the time it takes for the first token to be generated and the subsequent generation speed will be displayed. Please use not only short sentences but also multi-sentence instructions or business communications to verify that the translated text flows naturally to the end. Record the model used and the input text in the measurement results to ensure they can be compared under the same conditions.",
+      "optimized_output": "In the development meeting scheduled for next Monday, we will review the performance and usability of the translation application. Participants should share any issues identified so far and proposed improvements by Friday. In the new version, after translating a sentence, the time it takes for the first token to be generated and the subsequent generation speed will be displayed. Please use not only short sentences but also multi-sentence instructions or business communications to verify that the translations flow naturally to the end. Record the model used and the input sentence in the measurement results to ensure they can be compared under the same conditions.",
+      "same_tokens": false,
+      "stopped_on_eos": true
+    },
+    {
+      "input_text": "明日の午前十時に駅で待ち合わせましょう。",
+      "baseline_output": "Let's meet at the station tomorrow at 10 a.m.",
+      "optimized_output": "Let's meet at the station tomorrow at 10 a.m.",
+      "same_tokens": true,
+      "stopped_on_eos": true
+    },
+    {
+      "input_text": "The server is down. Please restart the application.",
+      "baseline_output": "サーバーがダウンしています。アプリケーションを再起動してください。",
+      "optimized_output": "サーバーがダウンしています。アプリケーションを再起動してください。",
+      "same_tokens": true,
+      "stopped_on_eos": true
+    },
+    {
+      "input_text": "このファイルを保存してから、画面を閉じてください。",
+      "baseline_output": "Please save this file and then close the window.",
+      "optimized_output": "Please save this file before closing the window.",
+      "same_tokens": false,
+      "stopped_on_eos": true
+    },
+    {
+      "input_text": "請求額は税込みで12,345円です。支払い期限は2026年11月30日です。",
+      "baseline_output": "The invoice amount is 12,345 yen, including tax. The payment deadline is November 30, 2026.",
+      "optimized_output": "The billed amount is ¥12,345, including tax. The payment deadline is November 30, 2026.",
+      "same_tokens": false,
+      "stopped_on_eos": true
+    }
+  ],
+  "quality_limit": "Only these five input texts were checked; no corpus-wide translation-quality evaluation has been performed.",
+  "optimized_model_bin_sha256": "c44477d82fae38912c44fb104fc99f707ff92d9dcb79d64d8674852138750657",
+  "cli_smoke": {
+    "report": "plamo3-genai-npu-20261106T123134+0900.json",
+    "command": "uv run python -B -X utf8 -m plamo3.plamo_genai --int4-lm-head",
+    "decode_tokens_per_second": 22.953134536743164,
+    "ttft_seconds": 0.17408018493652344,
+    "finished_on_stop_token": true
+  }
+}

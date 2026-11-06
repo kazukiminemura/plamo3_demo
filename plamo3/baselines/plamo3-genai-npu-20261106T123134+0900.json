@@ -1,0 +1,31 @@
+{
+  "model_dir": "C:\\Users\\IJKK-PEAR\\projects\\plamo3_demo\\plamo3\\models\\plamo-genai-head-int4",
+  "device": "NPU",
+  "pipeline": "OpenVINO GenAI LLMPipeline",
+  "weight_format": "int4",
+  "graph_precision": "float32",
+  "adapter_version": 4,
+  "lm_head_precision": "int4",
+  "openvino": "2026.4.1-22982-e213a147257-releases/2026/4",
+  "openvino_genai": "2026.4.1.0-3408-ab01d1771e4",
+  "pipeline_config": {
+    "MAX_PROMPT_LEN": 128,
+    "MIN_RESPONSE_LEN": 256,
+    "GENERATE_HINT": "BEST_PERF"
+  },
+  "max_new_tokens": 256,
+  "initialization_seconds": 38.015594199998304,
+  "warmup_runs": 1,
+  "measured_runs": 1,
+  "input_text": "来週の月曜日に予定している開発会議では、翻訳アプリケーションの性能と使いやすさについて確認します。参加者は、これまでに見つかった問題点と改善案を金曜日までに共有してください。新しいバージョンでは、文章を翻訳した後に、最初のトークンが生成されるまでの時間と、その後の生成速度が表示されます。短い文章だけでなく、複数の文からなる案内や業務上の連絡も使い、訳文が最後まで自然につながることを確認してください。測定結果には使用したモデルと入力文を記録し、同じ条件で比較できるようにします。",
+  "input_tokens": 110,
+  "output_text": "In the development meeting scheduled for next Monday, we will review the performance and usability of the translation application. Participants should share any issues identified so far and proposed improvements by Friday. In the new version, after translating a sentence, the time it takes for the first token to be generated and the subsequent generation speed will be displayed. Please use not only short sentences but also multi-sentence instructions or business communications to verify that the translations flow naturally to the end. Record the model used and the input sentence in the measurement results to ensure they can be compared under the same conditions.",
+  "generated_tokens": 89,
+  "ttft_seconds": 0.17408018493652344,
+  "decode_tokens_per_second": 22.953134536743164,
+  "generation_seconds": 4.0079970703125,
+  "finish_reasons": [
+    "GenerationFinishReason.STOP"
+  ],
+  "tokenizer": "Official Python tokenizer; tokenization/detokenization excluded from GenAI timings"
+}

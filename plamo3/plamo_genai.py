@@ -121,7 +121,51 @@ def make_stateful(model):
     return processing.build()
 
 
-def prepare_model(graph_precision="fp32"):
+def quantize_lm_head(model):
+    """Requantize the default INT8 output projection to symmetric per-channel INT4."""
+    import numpy as np
+    import openvino as ov
+    from openvino import opset13 as ops
+
+    head = model.output("logits").get_node()
+    while head.get_type_name() in ("Result", "Convert"):
+        head = head.input_value(0).get_node()
+    if head.get_type_name() != "MatMul":
+        raise ValueError("Expected a MatMul output projection")
+    weight = head.input_value(1).get_node()
+    if weight.get_type_name() != "Multiply" or weight.input_value(0).get_node().get_type_name() != "Subtract":
+        raise ValueError("Expected an asymmetric INT8 output projection")
+    subtract = weight.input_value(0).get_node()
+    quantized = subtract.input_value(0).get_node().input_value(0).get_node().get_data()
+    zero_point = subtract.input_value(1).get_node().input_value(0).get_node().get_data()
+    scale = weight.input_value(1).get_node().get_data().astype(np.float32)
+    if quantized.dtype != np.uint8 or quantized.ndim != 2 or quantized.shape[1] % 2:
+        raise ValueError("Expected an INT8 weight matrix with an even input dimension")
+    if zero_point.shape != (quantized.shape[0], 1) or scale.shape != zero_point.shape:
+        raise ValueError("Expected per-output-channel quantization")
+    magnitude = np.maximum(np.abs(quantized.max(axis=1, keepdims=True).astype(np.float32) - zero_point),
+                           np.abs(quantized.min(axis=1, keepdims=True).astype(np.float32) - zero_point))
+    new_scale = np.maximum(scale * magnitude / 7, np.finfo(np.float32).tiny)
+    packed = ov.Tensor(ov.Type.i4, list(quantized.shape))
+    raw = packed.data.reshape(quantized.shape[0], -1).view(np.uint8)
+    max_error = 0.0
+    for start in range(0, quantized.shape[0], 256):
+        stop = start + 256
+        original = (quantized[start:stop].astype(np.float32) - zero_point[start:stop]) * scale[start:stop]
+        values = np.clip(np.rint(original / new_scale[start:stop]), -7, 7).astype(np.int8)
+        raw[start:stop] = (values[:, 0::2].view(np.uint8) & 15) | ((values[:, 1::2].view(np.uint8) & 15) << 4)
+        max_error = max(max_error, float(np.abs(original - values.astype(np.float32) * new_scale[start:stop]).max()))
+    dtype = head.get_input_element_type(1)
+    compressed = ops.multiply(ops.convert(ov.op.Constant(packed), dtype),
+                              ops.constant(new_scale.astype(dtype.to_dtype())))
+    head.input(1).replace_source_output(compressed.output(0))
+    model.validate_nodes_and_infer_types()
+    return {"mode": "int4_sym", "group_size": -1, "shape": list(quantized.shape),
+            "original_bytes": quantized.nbytes, "packed_bytes": packed.data.nbytes,
+            "max_weight_absolute_error": max_error}
+
+
+def prepare_model(graph_precision="fp32", int4_lm_head=False):
     if graph_precision not in ("fp16", "fp32"):
         raise ValueError("graph_precision must be fp16 or fp32")
     import openvino as ov
@@ -130,11 +174,14 @@ def prepare_model(graph_precision="fp32"):
     from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
     destination = DESTINATION if graph_precision == "fp32" else ROOT / "models/plamo-genai-fp16-int4"
+    if int4_lm_head:
+        destination = ROOT / "models" / ("plamo-genai-head-int4" if graph_precision == "fp32" else "plamo-genai-fp16-head-int4")
     precision_name = "float32" if graph_precision == "fp32" else "float16"
     marker = destination / "plamo_genai.json"
     if marker.is_file():
         saved = json.loads(marker.read_text(encoding="utf-8"))
-        if saved.get("adapter_version") == 4 and saved.get("graph_precision") == precision_name:
+        if (saved.get("adapter_version") == 4 and saved.get("graph_precision") == precision_name
+                and saved.get("int4_lm_head", False) == int4_lm_head):
             return destination
     metadata = json.loads((SOURCE / "plamo_openvino.json").read_text(encoding="utf-8"))
     if metadata["cache_mode"] != "rotated" or metadata["weight_format"] != "int4":
@@ -179,10 +226,12 @@ def prepare_model(graph_precision="fp32"):
     promoted = normalize_genai_precision(model) if graph_precision == "fp32" else 0
     model = make_stateful(model)
     removed = remove_redundant_output_slice(model)
+    head_quantization = quantize_lm_head(model) if int4_lm_head else None
     ov.save_model(model, destination / "openvino_model.xml", compress_to_fp16=False)
     marker.write_text(json.dumps({**metadata, "adapter_version": 4, "stateful": True, "tokenization": "official_python",
                                  "graph_precision": precision_name, "promoted_nodes": promoted,
                                  "removed_output_slices": removed,
+                                 "int4_lm_head": int4_lm_head, "lm_head_quantization": head_quantization,
                                  "native_tokenizer_checks": matches}, indent=2), encoding="utf-8")
     return destination
 
@@ -196,8 +245,10 @@ def main(argv=None):
     parser.add_argument("--max-new-tokens", type=positive, default=256)
     parser.add_argument("--graph-precision", choices=["fp16", "fp32"], default="fp32",
                         help="演算グラフの型（主要重みはINT4のまま、既定fp32）")
+    parser.add_argument("--int4-lm-head", action="store_true",
+                        help="出力層もINT4に再量子化（訳文が変わる可能性あり）")
     args = parser.parse_args(argv)
-    destination = prepare_model(args.graph_precision)
+    destination = prepare_model(args.graph_precision, args.int4_lm_head)
     import openvino as ov
     import openvino_genai as genai
     from transformers import AutoTokenizer
@@ -227,6 +278,7 @@ def main(argv=None):
     report = {
         "model_dir": str(destination), "device": "NPU", "pipeline": "OpenVINO GenAI LLMPipeline",
         "weight_format": "int4", "graph_precision": "float16" if args.graph_precision == "fp16" else "float32", "adapter_version": 4,
+        "lm_head_precision": "int4" if args.int4_lm_head else "int8",
         "openvino": ov.__version__, "openvino_genai": genai.__version__,
         "pipeline_config": config, "max_new_tokens": args.max_new_tokens,
         "initialization_seconds": initialization_seconds, "warmup_runs": 1, "measured_runs": 1,
