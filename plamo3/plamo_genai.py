@@ -168,11 +168,6 @@ def quantize_lm_head(model):
 def prepare_model(graph_precision="fp32", int4_lm_head=False):
     if graph_precision not in ("fp16", "fp32"):
         raise ValueError("graph_precision must be fp16 or fp32")
-    import openvino as ov
-    from openvino_tokenizers import convert_tokenizer
-    from tokenizers import AddedToken, Tokenizer, decoders, models, processors
-    from transformers import AutoTokenizer, PreTrainedTokenizerFast
-
     destination = DESTINATION if graph_precision == "fp32" else ROOT / "models/plamo-genai-fp16-int4"
     if int4_lm_head:
         destination = ROOT / "models" / ("plamo-genai-head-int4" if graph_precision == "fp32" else "plamo-genai-fp16-head-int4")
@@ -183,9 +178,24 @@ def prepare_model(graph_precision="fp32", int4_lm_head=False):
         if (saved.get("adapter_version") == 4 and saved.get("graph_precision") == precision_name
                 and saved.get("int4_lm_head", False) == int4_lm_head):
             return destination
-    metadata = json.loads((SOURCE / "plamo_openvino.json").read_text(encoding="utf-8"))
+    metadata_path = SOURCE / "plamo_openvino.json"
+    if not metadata_path.is_file():
+        raise FileNotFoundError(
+            "GenAI用IRの作成に必要な変換済みINT4モデルがありません。\n"
+            "ダウンロードした元モデルは、そのままではGenAIで推論できません。\n"
+            "リポジトリのルートで次を実行してください（CPUで変換するためNPUは不要です）:\n"
+            "uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 "
+            f'--model-dir "{SOURCE}"\n'
+            "完了後、同じ推論コマンドを再実行してください。"
+        )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata["cache_mode"] != "rotated" or metadata["weight_format"] != "int4":
         raise ValueError("回転済みKV形式のINT4モデルが必要です。")
+    import openvino as ov
+    from openvino_tokenizers import convert_tokenizer
+    from tokenizers import AddedToken, Tokenizer, decoders, models, processors
+    from transformers import AutoTokenizer, PreTrainedTokenizerFast
+
     destination.mkdir(parents=True, exist_ok=True)
     for path in SOURCE.iterdir():
         if path.suffix in (".json", ".jsonl", ".py", ".jinja"):
@@ -257,7 +267,11 @@ def main(argv=None):
     available = core.available_devices
     if args.device not in available and not any(d.startswith(args.device + ".") for d in available):
         parser.error(f"デバイス {args.device} は利用できません。利用可能: {', '.join(available)}")
-    destination = prepare_model(args.graph_precision, args.int4_lm_head)
+    try:
+        destination = prepare_model(args.graph_precision, args.int4_lm_head)
+    except FileNotFoundError as exc:
+        print(f"モデルの準備に失敗しました: {exc}", file=sys.stderr)
+        return 1
     tokenizer = AutoTokenizer.from_pretrained(SOURCE, trust_remote_code=True, local_files_only=True)
     prompt = build_prompt(args.text, "ja", "en")
     encoded = tokenizer(prompt, return_tensors="np")

@@ -63,6 +63,10 @@ uv run plamo-translate export --npu-optimized --weight-format int4 --group-size 
 `Exported: ...` が表示されたら変換完了です。空でない出力先には上書きしません。
 公式モデルのカスタムPython実装を `trust_remote_code=True` で読み込みます。
 
+**CPU・GPUで推論する場合も、この初回変換が必要です。** 変換自体はCPUで行い、NPU本体は不要です。
+`--npu-optimized` と保存先の `plamo-npu-rotated-cw-int4` は回転済みKV形式の指定・名前であり、推論先をNPUに固定しません。
+`plamo_openvino.json` がない場合は未変換または変換未完了です。ダウンロードだけではこのファイルは作成されません。
+
 上の `--npu-optimized`、`--group-size -1`、`--model-dir` はGenAIで使うモデルを作るための指定です。
 `export` の引数を省略すると、通常の未回転KVキャッシュモデルを別の保存先に作成します。
 

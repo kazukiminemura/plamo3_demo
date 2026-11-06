@@ -11,6 +11,19 @@ from .plamo_translate import build_prompt, parser
 
 
 class AppTest(unittest.TestCase):
+    def test_genai_missing_export_explains_cpu_setup(self):
+        from . import plamo_genai
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(plamo_genai, "ROOT", Path(directory)), patch.object(plamo_genai, "SOURCE", Path(directory) / "missing"), patch.object(plamo_genai, "DESTINATION", Path(directory) / "genai"), patch("openvino.Core") as core, patch("openvino_genai.LLMPipeline") as pipeline, patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            core.return_value.available_devices = ["CPU"]
+            self.assertEqual(plamo_genai.main(["--device", "CPU"]), 1)
+            message = stderr.getvalue()
+            self.assertIn("uv run plamo-translate export --npu-optimized", message)
+            self.assertIn(f'--model-dir "{plamo_genai.SOURCE}"', message)
+            self.assertIn("NPUは不要", message)
+            self.assertNotIn("Traceback", message)
+            pipeline.assert_not_called()
+
     def test_genai_device_execution(self):
         import numpy as np
         from . import plamo_genai
