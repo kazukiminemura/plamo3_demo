@@ -158,3 +158,52 @@ uv run python -X utf8 -m plamo3.benchmark_genai --runs 3 --validate --output pla
 ```
 
 変更前の初回GenAI測定: [TTFT 0.335秒、Decode 5.54 tokens/s](baselines/plamo3-genai-npu-20261105T222234+0900.json)
+
+## 出力層の追加INT4量子化
+
+`main` のコミット `61a1daf62853065b943ae541c703a5feda3723c1` を基準に、追加の最適化を測定しました。
+基準モデルの出力層はINT8です。`--int4-lm-head` はこの出力層だけを対称・チャネル単位のINT4へ再量子化します。
+既存の128個のINT4重み（3,825,205,248バイト）はSHA-256で一致し、変更していません。
+埋め込みはINT8のままで、モデル全体のすべての重みがINT4になるわけではありません。
+
+```powershell
+uv run python -X utf8 -m plamo3.plamo_genai --int4-lm-head
+```
+
+FP32グラフの追加モデルは `plamo3/models/plamo-genai-head-int4/` に保存します。
+元の重みキャッシュの再ダウンロードは不要で、既存のINT4エクスポートから作成します。
+フラグを省略すると従来のINT8出力層を使います。
+
+同じ240文字・入力110トークン・生成上限256、ウォームアップ1回＋本測定5回の中央値:
+
+| 指標 | main基準 | 基準モデルの再測定 | 出力層INT4 |
+| --- | ---: | ---: | ---: |
+| Decode | 21.571 tokens/s | 21.598 tokens/s | **22.910 tokens/s** |
+| TTFT | 0.176秒 | 0.178秒 | 0.175秒 |
+
+初回基準比6.2%、再測定比6.1%の改善です。IRの重みファイルは4,715,129,625バイトから4,494,821,145バイトになりました。
+モデル読込・コンパイルとPython側のトークン化・復号は上表に含めません。
+環境はOpenVINO/GenAI 2026.4.1、Intel AI Boost（アーキテクチャ5010）、コンパイラー8.4です。
+
+これは数値を変える再量子化で、訳文の完全一致を保つ最適化ではありません。
+確認した5文のうち3文で出力トークンが変わりました。例えば `Please save this file and then close the window.` が
+`Please save this file before closing the window.` になりました。5文とも停止トークンまで生成し、請求額12,345円と期限2026年11月30日も保持しました。
+広い翻訳コーパスでの品質評価は未実施なので、品質を優先する場合は既定モデルを使ってください。
+
+- [mainの基準測定](baselines/main-61a1daf-baseline.json) / [基準モデルの再測定](baselines/main-61a1daf-recheck.json)
+- [実装した変換処理による追加モデルの測定](baselines/optimized-head-int4.json)
+- [出力比較と速度比較](baselines/optimization-61a1daf-comparison.json) / [既存重みの保持確認](baselines/head-int4-weight-verification.json)
+- [FP16の追加基準測定](baselines/main-61a1daf-fp16-baseline.json)
+
+再測定:
+
+```powershell
+uv run python -X utf8 -m plamo3.benchmark_genai --runs 5 --validate --output plamo3/baselines/recheck.json
+uv run python -X utf8 -m plamo3.benchmark_genai --runs 5 --validate --int4-lm-head --output plamo3/baselines/head-int4-measured.json
+```
+
+コンパイラーの動的量子化、実行要求の展開、最適化レベル、latency設定、正規化の精度、Turbo、恒等Convertの除去も比較しましたが、
+基準のDecode速度を明確に上回る改善は確認できず、既定設定には採用していません。
+行列積だけをFP32にしたFP16グラフも改善しませんでした。
+[探索記録と使用設定](baselines/investigations/main-61a1daf.json) に全測定をまとめています。
+NPUコンパイラーのソースやシステムの電源設定は変更していません。

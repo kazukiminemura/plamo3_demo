@@ -11,6 +11,31 @@ from .plamo_translate import build_prompt, parser
 
 
 class AppTest(unittest.TestCase):
+    def test_int4_lm_head_packing_and_error(self):
+        import numpy as np
+        import openvino as ov
+        from openvino import opset13 as ops
+        from .plamo_genai import quantize_lm_head
+
+        rng = np.random.default_rng(3)
+        q = rng.integers(0, 256, (270, 8), dtype=np.uint8)
+        zp = rng.integers(90, 160, (270, 1), dtype=np.uint8)
+        scale = np.full((270, 1), 0.01, np.float32)
+        original = (q.astype(np.float32) - zp) * scale
+        weight = ops.multiply(ops.subtract(ops.convert(ops.constant(q), "f32"),
+                                          ops.convert(ops.constant(zp), "f32")), ops.constant(scale))
+        data = ops.parameter([1, 8], np.float32)
+        result = ops.matmul(data, weight, False, True)
+        result.output(0).get_tensor().set_names({"logits"})
+        model = ov.Model([result], [data])
+        stats = quantize_lm_head(model)
+        changed = model.output("logits").get_node().input_value(0).get_node().input_value(1)
+        restored = list(ov.Core().compile_model(ov.Model([changed], []), "CPU")({}).values())[0]
+        bound = np.max(np.abs(original), axis=1, keepdims=True) / 14
+        self.assertTrue(np.all(np.abs(restored - original) <= bound + 1e-6))
+        self.assertEqual(stats["packed_bytes"], q.nbytes // 2)
+        self.assertAlmostEqual(stats["max_weight_absolute_error"], float(np.max(np.abs(restored - original))), places=6)
+
     def test_genai_precision_selects_separate_models(self):
         from . import plamo_genai
 
@@ -18,13 +43,16 @@ class AppTest(unittest.TestCase):
             root = Path(directory)
             fp32 = root / "models/plamo-genai-int4"
             fp16 = root / "models/plamo-genai-fp16-int4"
-            for path, precision in [(fp32, "float32"), (fp16, "float16")]:
+            head = root / "models/plamo-genai-head-int4"
+            for path, precision in [(fp32, "float32"), (fp16, "float16"), (head, "float32")]:
                 path.mkdir(parents=True)
                 (path / "plamo_genai.json").write_text(json.dumps({
-                    "adapter_version": 4, "graph_precision": precision}), encoding="utf-8")
+                    "adapter_version": 4, "graph_precision": precision,
+                    "int4_lm_head": path == head}), encoding="utf-8")
             with patch.object(plamo_genai, "ROOT", root), patch.object(plamo_genai, "DESTINATION", fp32):
                 self.assertEqual(plamo_genai.prepare_model("fp16"), fp16)
                 self.assertEqual(plamo_genai.prepare_model("fp32"), fp32)
+                self.assertEqual(plamo_genai.prepare_model("fp32", True), head)
                 with self.assertRaises(ValueError):
                     plamo_genai.prepare_model("fp64")
 
