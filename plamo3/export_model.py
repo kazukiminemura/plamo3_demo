@@ -156,14 +156,14 @@ def export_model(args):
     model = AutoModelForCausalLM.from_pretrained(
         snapshot, trust_remote_code=True, torch_dtype=torch.float16, low_cpu_mem_usage=True,
     ).eval()
-    optimized = getattr(args, "npu_optimized", False)
+    optimized = args.npu_optimized
     print(f"Converting to OpenVINO ({'rotated' if optimized else 'unrotated'} KV cache) ...", flush=True)
     converted = convert(model, rotated_cache=optimized)
     if args.weight_format != "fp16":
         import nncf
 
         mode = nncf.CompressWeightsMode.INT4_SYM if args.weight_format == "int4" else nncf.CompressWeightsMode.INT8_SYM
-        options = {"ratio": 1.0, "group_size": getattr(args, "group_size", 128)} if args.weight_format == "int4" else {}
+        options = {"ratio": 1.0, "group_size": args.group_size} if args.weight_format == "int4" else {}
         print(f"Compressing weights: {args.weight_format} ...", flush=True)
         converted = nncf.compress_weights(converted, mode=mode, **options)
     output.mkdir(parents=True, exist_ok=True)
@@ -185,7 +185,7 @@ def export_model(args):
         "weight_format": args.weight_format,
         "context_length": min(32768, model.config.window_size) if optimized else 32768,
         "cache_mode": "rotated" if optimized else "unrotated",
-        "group_size": getattr(args, "group_size", 128) if args.weight_format == "int4" else None,
+        "group_size": args.group_size if args.weight_format == "int4" else None,
         "default_max_new_tokens": 256,
         "num_hidden_layers": model.config.num_hidden_layers,
         "num_key_value_heads": model.config.num_key_value_heads,

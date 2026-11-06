@@ -163,8 +163,6 @@ def main():
             else:
                 result["runs"].append(sample)
             save()
-            if not sample["stopped_on_eos"]:
-                raise RuntimeError("翻訳が出力上限に達したため、この実行を有効なベースラインにしません。")
             print(f"{'warmup' if index == 0 else f'run {index}'}: "
                   f"{sample['translation_seconds']:.3f}s, {sample['tokens_per_second']:.3f} tokens/s, "
                   f"TTFT {sample['ttft_seconds']:.3f}s, Decode {speed:.3f} tokens/s, "

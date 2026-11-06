@@ -203,7 +203,7 @@ class Translator:
                 config.update({"NPU_COMPILER_DYNAMIC_QUANTIZATION": "YES",
                                "NPUW_DQ": "YES", "NPUW_DQ_FULL": "NO",
                                "NPUW_WEIGHTS_BANK": "shared", "NPUW_FUNCALL_FOR_ALL": "YES",
-                               "NPUW_FUNCALL_ASYNC": "YES", "NPUW_FOLD": "YES",
+                               "NPUW_FUNCALL_ASYNC": "YES",
                                "NPU_TURBO": "YES", "PERFORMANCE_HINT": "LATENCY",
                                "NPU_TILES": core.get_property("NPU", "NPU_MAX_TILES")})
             if self.npu_bucketed:
@@ -307,12 +307,12 @@ class Translator:
         generated = []
         inference_times = []
         emitted_at = []
-        use_cache = getattr(self, "npu_kv_cache", False)
-        rotated = getattr(self, "rotated_cache", False)
+        use_cache = self.npu_kv_cache
+        rotated = self.rotated_cache
         cache_arrays = {}
         previous_request = None
         for step in range(max_new_tokens):
-            bucketed = getattr(self, "npu_bucketed", False)
+            bucketed = self.npu_bucketed
             padded_length = min(size for size in self.bucket_requests if len(tokens) <= size) if bucketed else capacity
             padded = np.full((1, padded_length), self.tokenizer.pad_token_id, dtype=np.int64)
             mask = np.zeros((1, padded_length), dtype=np.int64)
