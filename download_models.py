@@ -2,15 +2,12 @@
 
 import argparse
 import os
-from pathlib import Path
 import sys
 
 from gemma.gemma_npu import MODEL_DIR as GEMMA_DIR, MODEL_ID as GEMMA_ID, REVISION as GEMMA_REVISION
+from plamo3.model_source import ALLOW_PATTERNS, MODEL_ID as PLAMO_ID, REVISION as PLAMO_REVISION, SOURCE_ROOT
 
-ROOT = Path(__file__).resolve().parent
-PLAMO_ID = "pfnet/plamo-3-translate-8b"
-PLAMO_REVISION = "681bd55cf01f5412aab8881e6a4a276c948fabc1"
-PLAMO_DIR = ROOT / "plamo3/models/.source" / PLAMO_REVISION
+PLAMO_DIR = SOURCE_ROOT / PLAMO_REVISION
 
 
 def main(argv=None):
@@ -25,7 +22,7 @@ def main(argv=None):
 
     models = {
         "plamo3": (PLAMO_ID, PLAMO_REVISION, PLAMO_DIR, {
-            "allow_patterns": ["*.json", "*.jsonl", "*.jinja", "*.py", "*.safetensors", "LICENSE/*"],
+            "allow_patterns": ALLOW_PATTERNS,
         }),
         "gemma": (GEMMA_ID, GEMMA_REVISION, GEMMA_DIR, {"ignore_patterns": [".gitattributes"]}),
     }

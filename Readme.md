@@ -42,9 +42,10 @@ Gemmaは利用条件への同意と `uv run hf auth login` が必要です。
 Gemmaの保存先は `gemma/models/gemma-3-4b-it-int4-cw-ov` です。
 PLaMoは約17GBの元モデルを `plamo3/models/.source/<revision>` に取得します。
 PLaMoは取得だけでは推論できません。初回は次のコマンドでINT4へ変換してください（取得済みの元モデルを再利用します）。
+`export` の既定リビジョンは事前ダウンロードと共通です。`--model-dir` を変更しても元モデルは同じ保存先から再利用します。
 
 ```powershell
-uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 --revision 681bd55cf01f5412aab8881e6a4a276c948fabc1 --model-dir plamo3/models/plamo-npu-rotated-cw-int4
+uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 --model-dir plamo3/models/plamo-npu-rotated-cw-int4
 ```
 
 Gemma 3 4B INT4 / OpenVINO GenAI / NPU:

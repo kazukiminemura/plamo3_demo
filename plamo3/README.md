@@ -41,10 +41,13 @@ NPUでは回転済みKVキャッシュと1トークンDecodeを使います。
 新しい環境で同じモデルを作成する場合（初回のみ）:
 
 ```powershell
-uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 --revision 681bd55cf01f5412aab8881e6a4a276c948fabc1 --model-dir plamo3/models/plamo-npu-rotated-cw-int4
+uv run python -X utf8 download_models.py plamo3
+uv run plamo-translate export --npu-optimized --weight-format int4 --group-size -1 --model-dir plamo3/models/plamo-npu-rotated-cw-int4
 ```
 
 既存のモデルは作り直す必要はありません。空でない変換先には上書きしません。
+事前ダウンロードと変換は同じ固定リビジョン・`plamo3/models/.source/<revision>` を使います。
+別リビジョンを変換する場合だけ `export --revision <ブランチまたはコミットID>` を指定します。
 元重みの取得は約17GBで、変換には推論より多くのメモリを使います。
 公式PFNリポジトリのカスタム実装を `trust_remote_code=True` で読み込みます。
 

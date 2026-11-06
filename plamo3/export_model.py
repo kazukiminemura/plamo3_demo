@@ -1,11 +1,13 @@
 """Convert PFN's original PLaMo3 implementation, including its unrotated KV cache."""
 
 import json
+import os
 from pathlib import Path
+import re
 
 import torch
 
-MODEL_ID = "pfnet/plamo-3-translate-8b"
+from .model_source import ALLOW_PATTERNS, MODEL_ID, SOURCE_ROOT
 
 
 class ExportCache:
@@ -134,6 +136,7 @@ def convert(model, rotated_cache=False):
 
 
 def export_model(args):
+    os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
     import openvino as ov
     from huggingface_hub import model_info, snapshot_download
     from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -142,10 +145,11 @@ def export_model(args):
     if output.exists() and any(output.iterdir()):
         raise ValueError(f"出力先が空ではありません: {output}。別の --model-dir を指定してください。")
     print(f"Downloading {MODEL_ID} ({args.revision}) ...", flush=True)
-    revision = model_info(MODEL_ID, revision=args.revision).sha
+    revision = (args.revision if re.fullmatch(r"[0-9a-fA-F]{40}", args.revision)
+                else model_info(MODEL_ID, revision=args.revision).sha)
     snapshot = snapshot_download(
-        MODEL_ID, revision=revision, local_dir=output.parent / ".source" / revision,
-        allow_patterns=["*.json", "*.jsonl", "*.jinja", "*.py", "*.safetensors", "LICENSE/*"],
+        MODEL_ID, revision=revision, local_dir=SOURCE_ROOT / revision,
+        allow_patterns=ALLOW_PATTERNS,
     )
     print("Loading original model on CPU ...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(snapshot, trust_remote_code=True)

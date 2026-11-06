@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from time import perf_counter
 
+from .model_source import REVISION
+
 LANGUAGES = "ja en zh-hans zh-hant ko ar az be bg bn ca ceb de es et eu fa fr gu he hi hr hu hy id it jv ka kk km lt lv ml mr ms my ne nl pa pl ru si sk sl sr sw ta te th tl ur uz vi".split()
 DEFAULT_MODEL_DIR = str(Path(__file__).resolve().parent / "models/plamo-3-translate-8b-int4")
 DEFAULT_NPU_MODEL_DIR = str(Path(__file__).resolve().parent / "models/plamo-npu-rotated-cw-int4")
@@ -383,7 +385,7 @@ def parser():
     commands = root.add_subparsers(dest="command", required=True)
     export = commands.add_parser("export", help="公式モデルをダウンロードしOpenVINOへ変換")
     export.add_argument("--model-dir", default=DEFAULT_MODEL_DIR)
-    export.add_argument("--revision", default="main", help="Hugging FaceのブランチまたはコミットID")
+    export.add_argument("--revision", default=REVISION, help="Hugging FaceのブランチまたはコミットID（既定: 事前ダウンロードと同じ固定コミット）")
     export.add_argument("--weight-format", choices=["int4", "int8", "fp16"], default="int4")
     export.add_argument("--npu-optimized", action="store_true", help="回転済みKV形式（SWAウィンドウ内の文脈専用）")
     export.add_argument("--group-size", type=int, choices=[-1, 128], default=128,
