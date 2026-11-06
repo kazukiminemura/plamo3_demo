@@ -1,4 +1,4 @@
-"""Prepare a stateful PLaMo INT4 IR and run OpenVINO GenAI on NPU."""
+"""Prepare a stateful PLaMo INT4 IR and run OpenVINO GenAI."""
 
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -240,19 +240,24 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="PLaMo 3 INT4をOpenVINO GenAIとNPUで推論")
+    parser = argparse.ArgumentParser(description="PLaMo 3 INT4をOpenVINO GenAIでCPU・GPU・NPU推論")
     parser.add_argument("text", nargs="?", default=DEFAULT_TEXT)
+    parser.add_argument("--device", type=str.upper, default="NPU", help="CPU / GPU / GPU.0 / NPU（既定NPU）")
     parser.add_argument("--max-new-tokens", type=positive, default=256)
     parser.add_argument("--graph-precision", choices=["fp16", "fp32"], default="fp32",
                         help="演算グラフの型（主要重みはINT4のまま、既定fp32）")
     parser.add_argument("--int4-lm-head", action="store_true",
                         help="出力層もINT4に再量子化（訳文が変わる可能性あり）")
     args = parser.parse_args(argv)
-    destination = prepare_model(args.graph_precision, args.int4_lm_head)
     import openvino as ov
     import openvino_genai as genai
     from transformers import AutoTokenizer
 
+    core = ov.Core()
+    available = core.available_devices
+    if args.device not in available and not any(d.startswith(args.device + ".") for d in available):
+        parser.error(f"デバイス {args.device} は利用できません。利用可能: {', '.join(available)}")
+    destination = prepare_model(args.graph_precision, args.int4_lm_head)
     tokenizer = AutoTokenizer.from_pretrained(SOURCE, trust_remote_code=True, local_files_only=True)
     prompt = build_prompt(args.text, "ja", "en")
     encoded = tokenizer(prompt, return_tensors="np")
@@ -261,11 +266,11 @@ def main(argv=None):
     if prompt_length + args.max_new_tokens > 2048:
         raise ValueError("このIRでは入力と生成上限の合計は2048トークン以内にしてください。")
     inputs = genai.TokenizedInputs(ov.Tensor(encoded["input_ids"]), ov.Tensor(encoded["attention_mask"]))
-    config = {"MAX_PROMPT_LEN": prompt_length, "MIN_RESPONSE_LEN": args.max_new_tokens,
-              "GENERATE_HINT": "BEST_PERF"}
-    print(f"PLaMo 3 INT4 / {args.graph_precision}グラフをGenAIのNPUパイプラインでコンパイル中 ...", file=sys.stderr, flush=True)
+    config = ({"MAX_PROMPT_LEN": prompt_length, "MIN_RESPONSE_LEN": args.max_new_tokens,
+               "GENERATE_HINT": "BEST_PERF"} if args.device.split(".")[0] == "NPU" else {})
+    print(f"PLaMo 3 INT4 / {args.graph_precision}グラフをGenAIの{args.device}パイプラインでコンパイル中 ...", file=sys.stderr, flush=True)
     started = perf_counter()
-    pipe = genai.LLMPipeline(destination, "NPU", **config)
+    pipe = genai.LLMPipeline(destination, args.device, **config)
     initialization_seconds = perf_counter() - started
     generation = {"max_new_tokens": args.max_new_tokens, "do_sample": False,
                   "eos_token_id": 2, "stop_token_ids": {1, 2, 16}}
@@ -276,7 +281,8 @@ def main(argv=None):
     print(output_text)
     metrics = result.perf_metrics
     report = {
-        "model_dir": str(destination), "device": "NPU", "pipeline": "OpenVINO GenAI LLMPipeline",
+        "model_dir": str(destination), "device": args.device,
+        "device_name": core.get_property(args.device, "FULL_DEVICE_NAME"), "pipeline": "OpenVINO GenAI LLMPipeline",
         "weight_format": "int4", "graph_precision": "float16" if args.graph_precision == "fp16" else "float32", "adapter_version": 4,
         "lm_head_precision": "int4" if args.int4_lm_head else "int8",
         "openvino": ov.__version__, "openvino_genai": genai.__version__,
@@ -291,7 +297,7 @@ def main(argv=None):
         "tokenizer": "Official Python tokenizer; tokenization/detokenization excluded from GenAI timings",
     }
     now = datetime.now(timezone(timedelta(hours=9)))
-    output = ROOT / "baselines" / f"plamo3-genai-npu-{now:%Y%m%dT%H%M%S%z}.json"
+    output = ROOT / "baselines" / f"plamo3-genai-{args.device.lower()}-{now:%Y%m%dT%H%M%S%z}.json"
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"TTFT: {report['ttft_seconds']:.3f} s | Decode: {report['decode_tokens_per_second']:.3f} tokens/s", file=sys.stderr)

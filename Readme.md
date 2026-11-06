@@ -1,20 +1,23 @@
-# Gemma / PLaMo 3 のNPU推論
+# Gemma / PLaMo 3 のCPU・GPU・NPU推論
 
-Intel NPUとOpenVINO GenAIで、Gemma 3 4Bの生成とPLaMo 3 Translate 8Bの翻訳を実行します。
+OpenVINO GenAIで、Gemma 3 4Bの生成とPLaMo 3 Translate 8Bの翻訳を実行します。
+`--device CPU` / `--device GPU` / `--device NPU` で実行先を選びます。省略時は従来どおりNPUです。
 Gemmaは変換済みモデルを取得します。PLaMoは元モデルを取得してINT4へ変換し、GenAI用のモデルを作成します。
 モデル本体はGitに含まれていません。
 
 ## 1. 環境を準備する
 
 WindowsのPowerShellで、**このREADMEがあるリポジトリのルート**からコマンドを実行してください。
-Intel NPUと対応ドライバー、`uv`、モデル取得用のインターネット接続が必要です。
+使用するデバイスに対応するOpenVINOプラグインとドライバー、`uv`、モデル取得用のインターネット接続が必要です。
 
 ```powershell
 uv sync --python 3.12 --locked
 uv run plamo-translate devices
 ```
 
-デバイス一覧に `NPU` が表示されることを確認します。OpenVINO / OpenVINO GenAIは2026.4.1に固定しています。
+デバイス一覧に使用するCPU・GPU・NPUが表示されることを確認します。複数GPUは `--device GPU.0` などで選択できます。
+GPUの対応可否はプラグイン・ドライバー・モデルの演算に依存し、CUDAデバイスの指定ではありません。
+OpenVINO / OpenVINO GenAIは2026.4.1に固定しています。
 
 Gemmaを使う場合は、[取得元モデル](https://huggingface.co/OpenVINO/gemma-3-4b-it-int4-cw-ov)の利用条件への同意とHugging Faceへのログインが必要です。
 
@@ -48,7 +51,7 @@ PLaMoの元重みは約17GBです。変換後のモデルも別途保存する�
 
 ## 3. PLaMoを変換して実行する
 
-### 初回: NPU用INT4モデルを作成する
+### 初回: GenAIの元になるINT4モデルを作成する
 
 ダウンロード完了後、次を実行します。
 
@@ -71,11 +74,16 @@ uv run python -X utf8 -m plamo3.plamo_genai
 
 # 自分の文章を英訳
 uv run python -X utf8 -m plamo3.plamo_genai "会議は来週の月曜日に変更されました。"
+
+# 同じGenAIモデルをCPUまたはGPUで実行
+uv run python -X utf8 -m plamo3.plamo_genai --device CPU
+uv run python -X utf8 -m plamo3.plamo_genai --device GPU
 ```
 
 初回はNPU用INT4モデルからGenAI用のstateful IRを作成し、以降は再利用します。
 ウォームアップ1回＋本測定1回を行い、訳文・TTFT・Decode速度を表示します。
-結果は `plamo3/baselines/plamo3-genai-npu-*.json` に保存します。
+結果は `plamo3/baselines/plamo3-genai-<device>-*.json` に保存します。
+CPU・GPUでも上の変換手順と同じモデルを使います。NPU専用のコンパイル設定はNPU指定時だけ適用します。
 
 既定はFP32の演算グラフで、主要重みはINT4です。生成上限は `--max-new-tokens`（既定256）で変更できます。
 32トークン単位に切り上げた入力長と生成上限の合計を2,048トークン以内に収めてください。
@@ -104,11 +112,14 @@ uv run plamo-translate translate --target-lang en
 ```powershell
 uv run python -X utf8 -m gemma.gemma_npu
 uv run python -X utf8 -m gemma.gemma_npu "Translate into English: 会議は明日です。" --max-new-tokens 256
+uv run python -X utf8 -m gemma.gemma_npu --device CPU
+uv run python -X utf8 -m gemma.gemma_npu --device GPU
 ```
 
 変換済みINT4モデルを使うため、エクスポート操作は不要です。
 起動時にもダウンロード処理を呼び、取得済みファイルを再利用します。
-ウォームアップ1回＋本測定1回を行い、結果を `gemma/baselines/gemma3-4b-npu-*.json` に保存します。
+ウォームアップ1回＋本測定1回を行い、結果を `gemma/baselines/gemma3-4b-<device>-*.json` に保存します。
+結果の `device` / `device_name` に実行先を記録します。利用できないデバイスを指定すると終了し、自動では切り替えません。
 
 ## 保存先と参照関係
 

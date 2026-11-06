@@ -11,6 +11,49 @@ from .plamo_translate import build_prompt, parser
 
 
 class AppTest(unittest.TestCase):
+    def test_genai_device_execution(self):
+        import numpy as np
+        from . import plamo_genai
+
+        with tempfile.TemporaryDirectory() as directory, patch.object(plamo_genai, "ROOT", Path(directory)), patch.object(plamo_genai, "prepare_model") as prepare, patch("transformers.AutoTokenizer.from_pretrained") as tokenizer, patch("openvino_genai.LLMPipeline") as pipeline, patch("openvino.Core") as core, patch("sys.stdout", new_callable=io.StringIO), patch("sys.stderr", new_callable=io.StringIO):
+            core.return_value.available_devices = ["CPU", "GPU.0", "GPU.1", "NPU"]
+            core.return_value.get_property.return_value = "Test device"
+            prepare.return_value = Path(directory) / "model"
+            tokenizer.return_value.return_value = {"input_ids": np.array([[1, 5, 6]], np.int64),
+                                                   "attention_mask": np.ones((1, 3), np.int64)}
+            tokenizer.return_value.decode.return_value = "Translation"
+            result = pipeline.return_value.generate.return_value
+            result.tokens = [[7, 2]]
+            result.finish_reasons = ["STOP"]
+            metrics = result.perf_metrics
+            metrics.get_num_generated_tokens.return_value = 2
+            metrics.get_ttft.return_value.mean = 100.0
+            metrics.get_throughput.return_value.mean = 20.0
+            metrics.get_generate_duration.return_value.mean = 200.0
+            for device in ("NPU", "CPU", "GPU", "GPU.1"):
+                with self.subTest(device=device):
+                    argv = [] if device == "NPU" else ["--device", device.lower()]
+                    self.assertEqual(plamo_genai.main(argv), 0)
+                    self.assertEqual(pipeline.call_args.args[1], device)
+                    expected = {"MAX_PROMPT_LEN": 32, "MIN_RESPONSE_LEN": 256, "GENERATE_HINT": "BEST_PERF"} if device == "NPU" else {}
+                    self.assertEqual(pipeline.call_args.kwargs, expected)
+                    report = json.loads(next((Path(directory) / "baselines").glob(f"plamo3-genai-{device.lower()}-*.json")).read_text(encoding="utf-8"))
+                    self.assertEqual(report["device"], device)
+                    self.assertEqual(report["device_name"], "Test device")
+                    self.assertEqual(report["output_text"], "Translation")
+                    pipeline.return_value.generate.assert_called_with(unittest.mock.ANY, max_new_tokens=256,
+                        do_sample=False, eos_token_id=2, stop_token_ids={1, 2, 16})
+
+    def test_genai_missing_device_does_not_prepare_model(self):
+        from . import plamo_genai
+
+        with patch("openvino.Core") as core, patch.object(plamo_genai, "prepare_model") as prepare, patch("sys.stderr", new_callable=io.StringIO):
+            core.return_value.available_devices = ["CPU"]
+            with self.assertRaises(SystemExit) as error:
+                plamo_genai.main(["--device", "GPU"])
+            self.assertEqual(error.exception.code, 2)
+            prepare.assert_not_called()
+
     def test_int4_lm_head_packing_and_error(self):
         import numpy as np
         import openvino as ov

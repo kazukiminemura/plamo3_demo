@@ -1,4 +1,4 @@
-"""Run the official Gemma 3 4B INT4 model on NPU with OpenVINO GenAI."""
+"""Run the official Gemma 3 4B INT4 model with OpenVINO GenAI."""
 
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -32,8 +32,9 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
-    parser = argparse.ArgumentParser(description="Gemma 3 4B INT4をNPUで推論・計測")
+    parser = argparse.ArgumentParser(description="Gemma 3 4B INT4をCPU・GPU・NPUで推論・計測")
     parser.add_argument("prompt", nargs="?", default=DEFAULT_PROMPT)
+    parser.add_argument("--device", type=str.upper, default="NPU", help="CPU / GPU / GPU.0 / NPU（既定NPU）")
     parser.add_argument("--max-new-tokens", type=positive, default=256)
     args = parser.parse_args(argv)
 
@@ -44,6 +45,11 @@ def main(argv=None):
     import openvino as ov
     import openvino_genai as genai
 
+    core = ov.Core()
+    available = core.available_devices
+    if args.device not in available and not any(d.startswith(args.device + ".") for d in available):
+        parser.error(f"デバイス {args.device} は利用できません。利用可能: {', '.join(available)}")
+
     try:
         snapshot_download(MODEL_ID, revision=REVISION, local_dir=MODEL_DIR,
                           ignore_patterns=[".gitattributes"])
@@ -52,11 +58,11 @@ def main(argv=None):
               "利用条件に同意後、uv run hf auth login を実行してください。", file=sys.stderr)
         return 1
 
-    config = {"MAX_PROMPT_LEN": 256, "MIN_RESPONSE_LEN": args.max_new_tokens,
-              "GENERATE_HINT": "BEST_PERF"}
-    print("Gemma 3 4B INT4をNPU用にコンパイル中 ...", file=sys.stderr, flush=True)
+    config = ({"MAX_PROMPT_LEN": 256, "MIN_RESPONSE_LEN": args.max_new_tokens,
+               "GENERATE_HINT": "BEST_PERF"} if args.device.split(".")[0] == "NPU" else {})
+    print(f"Gemma 3 4B INT4を{args.device}用にコンパイル中 ...", file=sys.stderr, flush=True)
     started = perf_counter()
-    pipe = genai.VLMPipeline(MODEL_DIR, "NPU", **config)
+    pipe = genai.VLMPipeline(MODEL_DIR, args.device, **config)
     initialization_seconds = perf_counter() - started
     print("ウォームアップ中 ...", file=sys.stderr, flush=True)
     pipe.generate(args.prompt, max_new_tokens=args.max_new_tokens, do_sample=False)
@@ -65,7 +71,7 @@ def main(argv=None):
     metrics = result.perf_metrics
     report = {
         "model_id": MODEL_ID, "revision": REVISION, "model_dir": str(MODEL_DIR),
-        "device": "NPU", "npu": ov.Core().get_property("NPU", "FULL_DEVICE_NAME"),
+        "device": args.device, "device_name": core.get_property(args.device, "FULL_DEVICE_NAME"),
         "openvino": ov.__version__, "openvino_genai": genai.__version__,
         "pipeline_config": config, "max_new_tokens": args.max_new_tokens,
         "initialization_seconds": initialization_seconds,
@@ -80,7 +86,9 @@ def main(argv=None):
     print(f"TTFT: {report['ttft_seconds']:.3f} s | "
           f"Decode: {report['decode_tokens_per_second']:.3f} tokens/s", file=sys.stderr)
     now = datetime.now(timezone(timedelta(hours=9)))
-    output = Path(__file__).resolve().parent / "baselines" / f"gemma3-4b-npu-{now:%Y%m%dT%H%M%S%z}.json"
+    if args.device.split(".")[0] == "NPU":
+        report["npu"] = report["device_name"]
+    output = Path(__file__).resolve().parent / "baselines" / f"gemma3-4b-{args.device.lower()}-{now:%Y%m%dT%H%M%S%z}.json"
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"Saved: {output}", file=sys.stderr)

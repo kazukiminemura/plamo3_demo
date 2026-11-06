@@ -1,11 +1,17 @@
-# Gemma 3 4B INT4 / OpenVINO GenAI / NPU
+# Gemma 3 4B INT4 / OpenVINO GenAI / CPU・GPU・NPU
 
 以下のコマンドはリポジトリのルートで実行します。
 
 ```powershell
 uv run python -X utf8 -m gemma.gemma_npu
 uv run python -X utf8 -m gemma.gemma_npu --max-new-tokens 256
+uv run python -X utf8 -m gemma.gemma_npu --device CPU
+uv run python -X utf8 -m gemma.gemma_npu --device GPU
 ```
+
+既定はNPUです。`--device GPU.0` のように個別GPUも指定できます。
+CPU・GPUにはNPU専用設定を渡しません。モデルは共通で、測定JSONのファイル名と `device` / `device_name` に実行先を記録します。
+対応デバイスは `uv run plamo-translate devices` で確認してください。
 
 初回は[公式モデル](https://huggingface.co/OpenVINO/gemma-3-4b-it-int4-cw-ov)を取得します。利用条件への同意とHugging Faceのログインが必要です。
 

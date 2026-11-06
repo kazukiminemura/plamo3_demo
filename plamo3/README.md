@@ -102,6 +102,18 @@ PLaMo 3 INT4をOpenVINO GenAIのNPUパイプラインで試す場合:
 uv run python -X utf8 -m plamo3.plamo_genai
 ```
 
+同じGenAIモデルをCPU・GPUで実行する場合:
+
+```powershell
+uv run python -X utf8 -m plamo3.plamo_genai --device CPU
+uv run python -X utf8 -m plamo3.plamo_genai --device GPU
+```
+
+既定はNPUです。個別GPUは `--device GPU.0` などで指定します。
+CPU・GPUでも下記と同じ回転済みINT4モデルからGenAI用IRを準備します。
+NPU専用のコンパイル設定はNPU指定時だけ適用し、測定結果は `plamo3-genai-<device>-*.json` に実行先の名前とともに保存します。
+使用可能なデバイスは `uv run plamo-translate devices` で確認してください。
+
 FP16の演算グラフでNPU推論する場合:
 
 ```powershell
