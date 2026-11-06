@@ -7,13 +7,15 @@ from pathlib import Path
 import statistics
 from time import perf_counter
 
-from .plamo_genai import DEFAULT_TEXT, DESTINATION, SOURCE, prepare_model
+from .plamo_genai import DEFAULT_TEXT, SOURCE, prepare_model
 from .plamo_translate import build_prompt, positive
 
 
 def main():
     parser = argparse.ArgumentParser(description="GenAI NPU performance investigation")
-    parser.add_argument("--model-dir", type=Path, default=DESTINATION)
+    model_options = parser.add_mutually_exclusive_group()
+    model_options.add_argument("--model-dir", type=Path)
+    model_options.add_argument("--graph-precision", choices=["fp16", "fp32"], default="fp32")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--runs", type=positive, default=3)
     parser.add_argument("--max-new-tokens", type=positive, default=256)
@@ -24,8 +26,7 @@ def main():
     import openvino_genai as genai
     from transformers import AutoTokenizer
 
-    if args.model_dir.resolve() == DESTINATION.resolve():
-        prepare_model()
+    args.model_dir = args.model_dir or prepare_model(args.graph_precision)
     tokenizer = AutoTokenizer.from_pretrained(SOURCE, trust_remote_code=True, local_files_only=True)
     prompt = build_prompt(DEFAULT_TEXT, "ja", "en")
     encoded = tokenizer(prompt, return_tensors="np")

@@ -121,24 +121,30 @@ def make_stateful(model):
     return processing.build()
 
 
-def prepare_model():
+def prepare_model(graph_precision="fp32"):
+    if graph_precision not in ("fp16", "fp32"):
+        raise ValueError("graph_precision must be fp16 or fp32")
     import openvino as ov
     from openvino_tokenizers import convert_tokenizer
     from tokenizers import AddedToken, Tokenizer, decoders, models, processors
     from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
-    marker = DESTINATION / "plamo_genai.json"
-    if marker.is_file() and json.loads(marker.read_text(encoding="utf-8")).get("adapter_version") == 4:
-        return
+    destination = DESTINATION if graph_precision == "fp32" else ROOT / "models/plamo-genai-fp16-int4"
+    precision_name = "float32" if graph_precision == "fp32" else "float16"
+    marker = destination / "plamo_genai.json"
+    if marker.is_file():
+        saved = json.loads(marker.read_text(encoding="utf-8"))
+        if saved.get("adapter_version") == 4 and saved.get("graph_precision") == precision_name:
+            return destination
     metadata = json.loads((SOURCE / "plamo_openvino.json").read_text(encoding="utf-8"))
     if metadata["cache_mode"] != "rotated" or metadata["weight_format"] != "int4":
         raise ValueError("回転済みKV形式のINT4モデルが必要です。")
-    DESTINATION.mkdir(parents=True, exist_ok=True)
+    destination.mkdir(parents=True, exist_ok=True)
     for path in SOURCE.iterdir():
         if path.suffix in (".json", ".jsonl", ".py", ".jinja"):
-            shutil.copyfile(path, DESTINATION / path.name)
+            shutil.copyfile(path, destination / path.name)
         elif path.name == "LICENSE":
-            shutil.copytree(path, DESTINATION / path.name, dirs_exist_ok=True)
+            shutil.copytree(path, destination / path.name, dirs_exist_ok=True)
 
     print("PLaMoトークナイザーIRを準備中 ...", file=sys.stderr, flush=True)
     rows = [json.loads(line) for line in (SOURCE / "tokenizer.jsonl").read_text(encoding="utf-8").splitlines()]
@@ -159,8 +165,8 @@ def prepare_model():
                                   eos_token=rows[2][0], pad_token=rows[3][0],
                                   additional_special_tokens=["<|plamo:tag|>"], clean_up_tokenization_spaces=False)
     tokenizer_model, detokenizer_model = convert_tokenizer(fast, with_detokenizer=True)
-    ov.save_model(tokenizer_model, DESTINATION / "openvino_tokenizer.xml")
-    ov.save_model(detokenizer_model, DESTINATION / "openvino_detokenizer.xml")
+    ov.save_model(tokenizer_model, destination / "openvino_tokenizer.xml")
+    ov.save_model(detokenizer_model, destination / "openvino_detokenizer.xml")
     # Generation uses the official tokenizer's IDs; no approximate tokenization is used.
     original = AutoTokenizer.from_pretrained(SOURCE, trust_remote_code=True, local_files_only=True)
     native = ov.Core().compile_model(tokenizer_model, "CPU")
@@ -170,14 +176,15 @@ def prepare_model():
     print(f"トークナイザー一致: {sum(matches)}/{len(matches)}（推論入力は公式実装を使用）", file=sys.stderr)
     print("INT4重みを再利用してstateful IRを保存中 ...", file=sys.stderr, flush=True)
     model = ov.Core().read_model(SOURCE / "openvino_model.xml")
-    promoted = normalize_genai_precision(model)
+    promoted = normalize_genai_precision(model) if graph_precision == "fp32" else 0
     model = make_stateful(model)
     removed = remove_redundant_output_slice(model)
-    ov.save_model(model, DESTINATION / "openvino_model.xml", compress_to_fp16=False)
+    ov.save_model(model, destination / "openvino_model.xml", compress_to_fp16=False)
     marker.write_text(json.dumps({**metadata, "adapter_version": 4, "stateful": True, "tokenization": "official_python",
-                                 "graph_precision": "float32", "promoted_nodes": promoted,
+                                 "graph_precision": precision_name, "promoted_nodes": promoted,
                                  "removed_output_slices": removed,
                                  "native_tokenizer_checks": matches}, indent=2), encoding="utf-8")
+    return destination
 
 
 def main(argv=None):
@@ -187,8 +194,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="PLaMo 3 INT4をOpenVINO GenAIとNPUで推論")
     parser.add_argument("text", nargs="?", default=DEFAULT_TEXT)
     parser.add_argument("--max-new-tokens", type=positive, default=256)
+    parser.add_argument("--graph-precision", choices=["fp16", "fp32"], default="fp32",
+                        help="演算グラフの型（主要重みはINT4のまま、既定fp32）")
     args = parser.parse_args(argv)
-    prepare_model()
+    destination = prepare_model(args.graph_precision)
     import openvino as ov
     import openvino_genai as genai
     from transformers import AutoTokenizer
@@ -203,9 +212,9 @@ def main(argv=None):
     inputs = genai.TokenizedInputs(ov.Tensor(encoded["input_ids"]), ov.Tensor(encoded["attention_mask"]))
     config = {"MAX_PROMPT_LEN": prompt_length, "MIN_RESPONSE_LEN": args.max_new_tokens,
               "GENERATE_HINT": "BEST_PERF"}
-    print("PLaMo 3 INT4をGenAIのNPUパイプラインでコンパイル中 ...", file=sys.stderr, flush=True)
+    print(f"PLaMo 3 INT4 / {args.graph_precision}グラフをGenAIのNPUパイプラインでコンパイル中 ...", file=sys.stderr, flush=True)
     started = perf_counter()
-    pipe = genai.LLMPipeline(DESTINATION, "NPU", **config)
+    pipe = genai.LLMPipeline(destination, "NPU", **config)
     initialization_seconds = perf_counter() - started
     generation = {"max_new_tokens": args.max_new_tokens, "do_sample": False,
                   "eos_token_id": 2, "stop_token_ids": {1, 2, 16}}
@@ -216,8 +225,8 @@ def main(argv=None):
     print(output_text)
     metrics = result.perf_metrics
     report = {
-        "model_dir": str(DESTINATION), "device": "NPU", "pipeline": "OpenVINO GenAI LLMPipeline",
-        "weight_format": "int4", "graph_precision": "float32", "adapter_version": 4,
+        "model_dir": str(destination), "device": "NPU", "pipeline": "OpenVINO GenAI LLMPipeline",
+        "weight_format": "int4", "graph_precision": "float16" if args.graph_precision == "fp16" else "float32", "adapter_version": 4,
         "openvino": ov.__version__, "openvino_genai": genai.__version__,
         "pipeline_config": config, "max_new_tokens": args.max_new_tokens,
         "initialization_seconds": initialization_seconds, "warmup_runs": 1, "measured_runs": 1,

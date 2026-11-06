@@ -13,9 +13,11 @@ plamo3/
   plamo_genai.py
   plamo_translate.py
   export_model.py
+  benchmark_genai.py
   benchmark_npu.py
   models/
   baselines/
+    investigations/
   test_app.py
   README.md
 ```
@@ -38,8 +40,14 @@ PLaMo 3 8B INT4 / OpenVINO GenAI / NPU:
 uv run python -X utf8 -m plamo3.plamo_genai
 ```
 
+FP16の演算グラフを選択する場合:
+
+```powershell
+uv run python -X utf8 -m plamo3.plamo_genai --graph-precision fp16
+```
+
 生成上限は両方とも `--max-new-tokens`（既定256）で指定します。
-実測はGemma 35.08 tokens/s、最適化後のPLaMo 21.73 tokens/sです。PLaMoは同条件3回の中央値で、変更前の5.21 tokens/sから約4.17倍に改善しました。
+実測はGemma 35.08 tokens/s、FP32グラフの最適化後のPLaMo 21.73 tokens/sです。PLaMoは同条件3回の中央値で、変更前の5.21 tokens/sから約4.17倍に改善しました。
 モデルサイズと入力形式が異なり、PLaMoの計測はPython側のトークン化・復号を含みません。
 
 テスト:

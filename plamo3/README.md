@@ -99,6 +99,18 @@ PLaMo 3 INT4をOpenVINO GenAIのNPUパイプラインで試す場合:
 uv run python -X utf8 -m plamo3.plamo_genai
 ```
 
+FP16の演算グラフでNPU推論する場合:
+
+```powershell
+uv run python -X utf8 -m plamo3.plamo_genai --graph-precision fp16
+```
+
+主要重みはINT4のまま、FP32へのグラフ統一を省略したモデルを `plamo3/models/plamo-genai-fp16-int4` に作成します。
+元のモデルでFP32を使う正規化処理と、GenAIが要求するFP32のlogits出力は維持します。
+既定のFP32グラフとは別に保存します。再測定は `plamo3.benchmark_genai --graph-precision fp16` でも選択できます。
+FP16モードの実機確認（ウォームアップ後1回）はTTFT 0.332秒、Decode 5.50 tokens/sで、停止トークンまで翻訳できました。
+[FP16測定結果](baselines/plamo3-genai-npu-20261106T110314+0900.json)
+
 初回は既存の `plamo3/models/plamo-npu-rotated-cw-int4` の重みを使い、GenAI用のstateful IRを `plamo3/models/plamo-genai-int4` に作成します。
 入力のトークン化・出力の復号には公式Pythonトークナイザーを使い、生成ループとKVキャッシュ管理はGenAIの `LLMPipeline` に任せます。
 既定の240文字を日英翻訳し、ウォームアップ1回＋本測定1回の結果を `plamo3/baselines/plamo3-genai-npu-*.json` に保存します。
@@ -131,6 +143,9 @@ INT4重みを保ったまま演算グラフの型をFP32に統一し、出力端
 
 切り分けでは、出力Sliceだけの除去で6.51 tokens/s、FP32の演算グラフと組み合わせた探索測定で18.88 tokens/sを確認しました。
 MLP投影の分割（5.23 tokens/s）とEmbedding行選択の移動（5.26 tokens/s）は改善せず、採用していません。これらの探索値は本測定1回であり、上表の最終比較はそれぞれ3回の中央値です。
+
+探索測定の記録は [baselines/investigations/](baselines/investigations/) にまとめています。
+推論で使わない取得元の重みキャッシュ `plamo3/models/.source/` と調査用ソースは削除しています。モデルを再エクスポートするときは取得元の重みを再ダウンロードします。
 
 不要なSliceは、[OpenVINO 2026.4.1の出力層分離処理](https://github.com/openvinotoolkit/openvino/blob/2026.4.1/src/plugins/intel_npu/src/plugin/npuw/llm_compiled_model.cpp)のパターン認識を妨げていました。
 主な改善はFP16からFP32へのIR表現の統一で得られました。この環境でのコンパイラー最適化との相性を実測で切り分けた結果であり、一般にFP32計算がFP16計算より速いという意味ではありません。

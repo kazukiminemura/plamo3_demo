@@ -11,6 +11,23 @@ from .plamo_translate import build_prompt, parser
 
 
 class AppTest(unittest.TestCase):
+    def test_genai_precision_selects_separate_models(self):
+        from . import plamo_genai
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fp32 = root / "models/plamo-genai-int4"
+            fp16 = root / "models/plamo-genai-fp16-int4"
+            for path, precision in [(fp32, "float32"), (fp16, "float16")]:
+                path.mkdir(parents=True)
+                (path / "plamo_genai.json").write_text(json.dumps({
+                    "adapter_version": 4, "graph_precision": precision}), encoding="utf-8")
+            with patch.object(plamo_genai, "ROOT", root), patch.object(plamo_genai, "DESTINATION", fp32):
+                self.assertEqual(plamo_genai.prepare_model("fp16"), fp16)
+                self.assertEqual(plamo_genai.prepare_model("fp32"), fp32)
+                with self.assertRaises(ValueError):
+                    plamo_genai.prepare_model("fp64")
+
     def test_genai_precision_preserves_int4_weights(self):
         import numpy as np
         import openvino as ov
@@ -77,6 +94,8 @@ class AppTest(unittest.TestCase):
             node.output(0).get_tensor().set_names({name})
         model = make_stateful(ov.Model([logits, present_key, present_value], [ids, key, value]))
         self.assertEqual(model.output("logits").get_element_type(), ov.Type.f32)
+        self.assertTrue(all(node.get_output_element_type(0) == ov.Type.f16
+                            for node in model.get_ordered_ops() if node.get_type_name() == "ReadValue"))
         request = ov.Core().compile_model(model, "CPU").create_infer_request()
         self.assertEqual(len(request.query_state()), 2)
         for tokens, expected in [([2, 3], 15.0), ([4], 27.0)]:
