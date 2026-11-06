@@ -22,6 +22,62 @@ DEFAULT_TEXT = (
 )
 
 
+def normalize_genai_precision(model):
+    """Use GenAI's FP32 graph convention while keeping packed INT4 weights intact."""
+    import numpy as np
+    import openvino as ov
+    from openvino import opset13 as ops
+
+    count = 0
+    for node in list(model.get_ordered_ops()):
+        if node.get_type_name() == "Parameter" and node.get_output_element_type(0) == ov.Type.f16:
+            node.set_element_type(ov.Type.f32)
+            count += 1
+        elif node.get_type_name() == "Constant" and node.get_output_element_type(0) == ov.Type.f16:
+            replacement = ops.constant(node.get_data().astype(np.float32))
+            replacement.set_friendly_name(node.get_friendly_name())
+            replacement.output(0).get_tensor().set_names(node.output(0).get_names())
+            node.output(0).replace(replacement.output(0))
+            count += 1
+            continue
+        elif node.get_type_name() == "Convert" and node.get_output_element_type(0) == ov.Type.f16:
+            replacement = ops.convert(node.input_value(0), ov.Type.f32)
+            replacement.set_friendly_name(node.get_friendly_name())
+            replacement.output(0).get_tensor().set_names(node.output(0).get_names())
+            node.output(0).replace(replacement.output(0))
+            count += 1
+            continue
+        node.validate_and_infer_types()
+    model.validate_nodes_and_infer_types()
+    return count
+
+
+def remove_redundant_output_slice(model):
+    """Expose MatMul -> Convert -> Result to GenAI's shared LM-head matcher."""
+    count = 0
+    for result in model.get_results():
+        node = result.input_value(0).get_node()
+        if node.get_type_name() == "Convert":
+            node = node.input_value(0).get_node()
+        if node.get_type_name() != "Slice" or node.get_input_size() != 5:
+            continue
+        constants = [node.input_value(i).get_node() for i in range(1, 5)]
+        if not all(c.get_type_name() == "Constant" for c in constants):
+            continue
+        starts, stops, steps, axes = [c.get_data().reshape(-1).tolist() for c in constants]
+        shape = node.get_input_partial_shape(0)
+        if shape.rank.is_dynamic:
+            continue
+        rank = shape.rank.get_length()
+        if all(step == 1 and start == 0 and shape[axis % rank].is_static and
+               stop >= shape[axis % rank].get_length()
+               for start, stop, step, axis in zip(starts, stops, steps, axes, strict=True)):
+            node.output(0).replace(node.input_value(0))
+            count += 1
+    model.validate_nodes_and_infer_types()
+    return count
+
+
 def make_stateful(model):
     import numpy as np
     import openvino as ov
@@ -72,7 +128,7 @@ def prepare_model():
     from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
     marker = DESTINATION / "plamo_genai.json"
-    if marker.is_file() and json.loads(marker.read_text(encoding="utf-8")).get("adapter_version") == 3:
+    if marker.is_file() and json.loads(marker.read_text(encoding="utf-8")).get("adapter_version") == 4:
         return
     metadata = json.loads((SOURCE / "plamo_openvino.json").read_text(encoding="utf-8"))
     if metadata["cache_mode"] != "rotated" or metadata["weight_format"] != "int4":
@@ -113,9 +169,14 @@ def prepare_model():
     matches = [native([text])[native.output("input_ids")][0].tolist() == original.encode(text) for text in checks]
     print(f"トークナイザー一致: {sum(matches)}/{len(matches)}（推論入力は公式実装を使用）", file=sys.stderr)
     print("INT4重みを再利用してstateful IRを保存中 ...", file=sys.stderr, flush=True)
-    model = make_stateful(ov.Core().read_model(SOURCE / "openvino_model.xml"))
+    model = ov.Core().read_model(SOURCE / "openvino_model.xml")
+    promoted = normalize_genai_precision(model)
+    model = make_stateful(model)
+    removed = remove_redundant_output_slice(model)
     ov.save_model(model, DESTINATION / "openvino_model.xml", compress_to_fp16=False)
-    marker.write_text(json.dumps({**metadata, "adapter_version": 3, "stateful": True, "tokenization": "official_python",
+    marker.write_text(json.dumps({**metadata, "adapter_version": 4, "stateful": True, "tokenization": "official_python",
+                                 "graph_precision": "float32", "promoted_nodes": promoted,
+                                 "removed_output_slices": removed,
                                  "native_tokenizer_checks": matches}, indent=2), encoding="utf-8")
 
 
@@ -156,6 +217,7 @@ def main(argv=None):
     metrics = result.perf_metrics
     report = {
         "model_dir": str(DESTINATION), "device": "NPU", "pipeline": "OpenVINO GenAI LLMPipeline",
+        "weight_format": "int4", "graph_precision": "float32", "adapter_version": 4,
         "openvino": ov.__version__, "openvino_genai": genai.__version__,
         "pipeline_config": config, "max_new_tokens": args.max_new_tokens,
         "initialization_seconds": initialization_seconds, "warmup_runs": 1, "measured_runs": 1,

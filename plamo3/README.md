@@ -111,5 +111,35 @@ GenAIの計測値はPython側のトークン化・復号時間を含みません
 
 モデルの利用条件は公式のライセンスを参照してください。
 
-GenAI版の実測: TTFT 0.335秒、Decode 5.54 tokens/s。
-[GenAI測定結果](baselines/plamo3-genai-npu-20261105T222234+0900.json)
+## GenAI NPUの高速化
+
+INT4重みを保ったまま演算グラフの型をFP32に統一し、出力端の不要なSliceを除去しています。
+既存のadapter version 3モデルは、次回実行時にversion 4へ自動変換されます。再ダウンロード・再量子化は不要です。
+
+同じNPU、同じ240文字・入力110トークン、生成上限256、ウォームアップ1回＋本測定3回の中央値:
+
+| 指標 | 変更前 | 変更後 |
+| --- | ---: | ---: |
+| Decode | 5.214 tokens/s | **21.728 tokens/s** |
+| TTFT | 0.333秒 | **0.193秒** |
+| 生成全体 | 17.402秒 | **4.288秒** |
+
+速度は約4.17倍です。3回とも同じトークン列で停止トークンまで生成し、変更前ともトークン列が一致しました。
+追加の日英・英日4文でも、数値と日付を含めて最後まで翻訳できました。モデル読込・コンパイルとPython側のトークン化・復号は計測に含めません。
+
+[変更前の3回測定](baselines/genai-before-optimization.json) / [変更後の3回測定と追加翻訳](baselines/genai-after-optimization.json)
+
+切り分けでは、出力Sliceだけの除去で6.51 tokens/s、FP32の演算グラフと組み合わせた探索測定で18.88 tokens/sを確認しました。
+MLP投影の分割（5.23 tokens/s）とEmbedding行選択の移動（5.26 tokens/s）は改善せず、採用していません。これらの探索値は本測定1回であり、上表の最終比較はそれぞれ3回の中央値です。
+
+不要なSliceは、[OpenVINO 2026.4.1の出力層分離処理](https://github.com/openvinotoolkit/openvino/blob/2026.4.1/src/plugins/intel_npu/src/plugin/npuw/llm_compiled_model.cpp)のパターン認識を妨げていました。
+主な改善はFP16からFP32へのIR表現の統一で得られました。この環境でのコンパイラー最適化との相性を実測で切り分けた結果であり、一般にFP32計算がFP16計算より速いという意味ではありません。
+カーネル別プロファイルは有効化時のコンパイルが完了せず中断したため、個々のNPU演算の時間内訳は未確定です。
+
+再測定:
+
+```powershell
+uv run python -X utf8 -m plamo3.benchmark_genai --runs 3 --validate --output plamo3/baselines/genai-measured.json
+```
+
+変更前の初回GenAI測定: [TTFT 0.335秒、Decode 5.54 tokens/s](baselines/plamo3-genai-npu-20261105T222234+0900.json)

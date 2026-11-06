@@ -11,6 +11,51 @@ from .plamo_translate import build_prompt, parser
 
 
 class AppTest(unittest.TestCase):
+    def test_genai_precision_preserves_int4_weights(self):
+        import numpy as np
+        import openvino as ov
+        from openvino import opset13 as ops
+        from .plamo_genai import normalize_genai_precision
+
+        packed = ov.Tensor(ov.Type.i4, [8, 4])
+        packed.data[:] = np.arange(16, dtype=np.int8)
+        weight = ops.multiply(ops.convert(ov.op.Constant(packed), "f16"),
+                              ops.constant(np.full((8, 1), 0.125, np.float16)))
+        data = ops.parameter([1, 4], np.float16, name="data")
+        original = ov.Model([ops.matmul(data, weight, False, True)], [data])
+        changed = original.clone()
+        self.assertGreater(normalize_genai_precision(changed), 0)
+        self.assertEqual(changed.input(0).get_element_type(), ov.Type.f32)
+        self.assertEqual(changed.output(0).get_element_type(), ov.Type.f32)
+        low_bit = [n for n in changed.get_ordered_ops()
+                   if n.get_type_name() == "Constant" and n.get_output_element_type(0) == ov.Type.i4]
+        self.assertEqual(len(low_bit), 1)
+        np.testing.assert_array_equal(low_bit[0].get_data(), packed.data)
+        sample = np.array([[1, -2, 3, -4]], np.float16)
+        before = list(ov.Core().compile_model(original, "CPU")(sample).values())[0]
+        after = list(ov.Core().compile_model(changed, "CPU")(sample.astype(np.float32)).values())[0]
+        np.testing.assert_allclose(before, after, rtol=1e-3, atol=1e-3)
+
+
+    def test_remove_only_full_output_slice(self):
+        import numpy as np
+        import openvino as ov
+        from openvino import opset13 as ops
+        from .plamo_genai import remove_redundant_output_slice
+
+        data = ops.parameter([1, -1, 8], np.float16, name="data")
+        for stop, expected in [(8, 1), (7, 0)]:
+            sliced = ops.slice(data, ops.constant([0], np.int64), ops.constant([stop], np.int64),
+                               ops.constant([1], np.int64), ops.constant([2], np.int64))
+            original = ov.Model([ops.convert(sliced, "f32")], [data])
+            changed = original.clone()
+            self.assertEqual(remove_redundant_output_slice(changed), expected)
+            sample = np.arange(16, dtype=np.float16).reshape(1, 2, 8)
+            before = list(ov.Core().compile_model(original, "CPU")(sample).values())[0]
+            after = list(ov.Core().compile_model(changed, "CPU")(sample).values())[0]
+            np.testing.assert_array_equal(before, after)
+
+
     def test_genai_stateful_cache(self):
         import numpy as np
         import openvino as ov

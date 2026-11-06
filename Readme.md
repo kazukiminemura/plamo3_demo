@@ -39,7 +39,8 @@ uv run python -X utf8 -m plamo3.plamo_genai
 ```
 
 生成上限は両方とも `--max-new-tokens`（既定256）で指定します。
-実測はGemma 35.08 tokens/s、PLaMo 5.54 tokens/sです。モデルサイズと入力形式が異なり、PLaMoの計測はPython側のトークン化・復号を含みません。
+実測はGemma 35.08 tokens/s、最適化後のPLaMo 21.73 tokens/sです。PLaMoは同条件3回の中央値で、変更前の5.21 tokens/sから約4.17倍に改善しました。
+モデルサイズと入力形式が異なり、PLaMoの計測はPython側のトークン化・復号を含みません。
 
 テスト:
 
